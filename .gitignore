@@ -1,14 +1,13 @@
-youtube-webos/node_modules
 /dist
 /cobalt
 /workdir
+/workdir-install-adfree
 /.env
 /.vscode
 *.pyc
 /output/*
 /node_modules
-/package.json
-/package-lock.json
-/youtube-webos/output
+/webapp/node_modules
+/webapp/output
 /cobalt-bin/*
 !/cobalt-bin/*.xz

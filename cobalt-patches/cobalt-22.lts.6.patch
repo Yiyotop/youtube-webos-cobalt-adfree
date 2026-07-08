@@ -58,7 +58,7 @@ index d62749aa1..3eb15d6dc 100644
 -                                 const std::string& value) {
 +                                 std::string& value) {
    DCHECK(!name.empty());
-+  value.append(" sponsorblock.inf.re");
++  value.append(" sponsor.ajay.app");
    std::string lower_name = base::ToLowerASCII(name);
    if (lower_name == ContentSecurityPolicy::kDefaultSrc) {
      SetCSPDirective(name, value, &default_src_);

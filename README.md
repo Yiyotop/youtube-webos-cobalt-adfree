@@ -6,6 +6,14 @@ This project patches the webOS YouTube application by replacing or modifying the
 
 > This project is unofficial and is not affiliated with YouTube, Google, LG or webOS.
 
+## v1.0.0
+
+The first public release is available from the GitHub releases page:
+
+<https://github.com/RF1705/youtube-webos-cobalt-adfree/releases>
+
+The release package uses its own app id, `com.cobalt.youtube.adfree`, so it can be installed next to the official YouTube app without overwriting it.
+
 ## Features
 
 * YouTube for LG webOS TVs
@@ -31,11 +39,18 @@ The configuration screen can be opened with the **GREEN** button on the LG remot
 sudo apt install jq git patch sed binutils squashfs-tools rename findutils xz-utils
 ```
 
-The official YouTube app should be uninstalled before installing the patched package.
+The patched app uses its own app id by default: `com.cobalt.youtube.adfree`.
+It can be installed next to the official YouTube app.
 
 ## Installation
 
 Download a release `.ipk` package and install it using one of the following methods.
+
+Recommended release package:
+
+```text
+com.cobalt.youtube.adfree_1.1.7_arm.ipk
+```
 
 ### Install via webOS Device Manager
 
@@ -44,7 +59,7 @@ Use the webOS Device Manager and install the downloaded `.ipk` package.
 ### Install via ares-cli
 
 ```sh
-ares-install youtube.leanback.v4_*.ipk
+ares-install com.cobalt.youtube.adfree_*.ipk
 ```
 
 ### Install via SSH on rooted/Homebrew webOS
@@ -52,13 +67,13 @@ ares-install youtube.leanback.v4_*.ipk
 Copy the `.ipk` to the TV and install it via SSH:
 
 ```sh
-opkg install /path/to/youtube.leanback.v4_*.ipk
+opkg install /path/to/com.cobalt.youtube.adfree_*.ipk
 ```
 
 Example:
 
 ```sh
-opkg install /home/root/youtube.leanback.v4_0.5.3_all.ipk
+opkg install /home/root/com.cobalt.youtube.adfree_1.1.7_arm.ipk
 ```
 
 ## Patch an official YouTube IPK
@@ -76,10 +91,17 @@ Patch your official YouTube IPK:
 make PACKAGE=./your-tv-youtube.ipk
 ```
 
-To use a custom package name:
+By default the patched package uses:
+
+```text
+App ID: com.cobalt.youtube.adfree
+Name:   YouTube Cobalt AdFree
+```
+
+To overwrite the official YouTube app instead:
 
 ```sh
-make PACKAGE=./your-tv-youtube.ipk PACKAGE_NAME=youtube-free.leanback.v4
+make PACKAGE=./your-tv-youtube.ipk PACKAGE_NAME=youtube.leanback.v4
 ```
 
 The patched IPK will be created next to the original package.
@@ -91,13 +113,13 @@ Autostart can make the app appear as an input source next to HDMI/Live TV.
 Enable autostart:
 
 ```sh
-luna-send-pub -n 1 'luna://com.webos.service.eim/addDevice' '{"appId":"youtube.leanback.v4","pigImage":"","mvpdIcon":""}'
+luna-send-pub -n 1 'luna://com.webos.service.eim/addDevice' '{"appId":"com.cobalt.youtube.adfree","pigImage":"","mvpdIcon":""}'
 ```
 
 Disable autostart:
 
 ```sh
-luna-send -n 1 'luna://com.webos.service.eim/deleteDevice' '{"appId":"youtube.leanback.v4"}'
+luna-send -n 1 'luna://com.webos.service.eim/deleteDevice' '{"appId":"com.cobalt.youtube.adfree"}'
 ```
 
 Autostart may improve startup time because the app can stay loaded in the background. This can increase idle memory usage.
@@ -163,6 +185,10 @@ This project is community maintained. YouTube TV, Cobalt and webOS can change at
 ## Credits
 
 This project builds on research and work from the webOS Homebrew, Cobalt and YouTube TV modification communities.
+
+If this project helps you, you can support the maintainer here:
+
+<https://buymeacoffee.com/rf1705>
 
 ## License
 

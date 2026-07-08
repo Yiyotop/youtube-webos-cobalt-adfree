@@ -29,6 +29,7 @@ jobs:
           test -d assets
           test -d cobalt-bin
           test -d cobalt-patches
+          test -d webapp
 
       - name: Check no old youtube-webos app folder exists
         run: |
@@ -36,4 +37,4 @@ jobs:
 
       - name: Search old project references
         run: |
-          ! grep -RIn "GuillaumeSmaha/youtube-webos-cobalt\|FriedChickenButt/youtube-webos\|cd youtube-webos\|npm run build\|npm run package" . --exclude-dir=.git
+          ! grep -RIn "GuillaumeSmaha/youtube-webos-cobalt\|FriedChickenButt/youtube-webos\|cd youtube-webos\|webosbrew/youtube-webos" . --exclude-dir=.git

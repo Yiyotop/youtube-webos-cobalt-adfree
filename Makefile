@@ -7,9 +7,10 @@ CURRENT_DIR := $(dir $(MAKEFILE_PATH))
 
 PACKAGE?=
 PACKAGE_TARGET?=$(basename $(PACKAGE))-patched.ipk
-PACKAGE_NAME?=
 PACKAGE_NAME_OFFICIAL=youtube.leanback.v4
-PACKAGE_NAME_TARGET=$(if $(PACKAGE_NAME),$(PACKAGE_NAME),$(PACKAGE_NAME_OFFICIAL))
+PACKAGE_NAME?=com.cobalt.youtube.adfree
+PACKAGE_NAME_TARGET=$(PACKAGE_NAME)
+PACKAGE_DISPLAY_NAME?=YouTube Cobalt AdFree
 PACKAGE_COBALT_VERSION?=23.lts.4
 PACKAGE_SB_API_VERSION?=$(shell strings $(WORKDIR)/image/usr/palm/applications/$(PACKAGE_NAME_OFFICIAL)/cobalt | grep sb_api | jq -r '.sb_api_version' | grep -v null || strings $(WORKDIR)/package/usr/palm/applications/$(PACKAGE_NAME_OFFICIAL)/cobalt | grep sb_api | jq -r '.sb_api_version' | grep -v null)
 PACKAGE_VERSION?=$(shell jq -r '.version' < $(WORKDIR)/package/usr/palm/applications/$(PACKAGE_NAME_OFFICIAL)/appinfo.json)
@@ -28,6 +29,7 @@ BUILD_COBALT_ARCHITECTURE?=arm-softfp
 BUILD_COBALT_PLATFORM?=evergreen-$(BUILD_COBALT_ARCHITECTURE)
 BUILD_COBALT_TARGET?=cobalt
 BUILD_COBALT_YOUTUBE_APP_FILES_RULES=$(foreach file,$(WEBOS_YOUTUBE_APP_FILES),$(WORKDIR_COBALT)/cobalt/adblock/content/$(file))
+WEBAPP_OUTPUT_FILES=$(foreach file,$(WEBOS_YOUTUBE_APP_FILES),webapp/output/$(file))
 
 WEBOS_YOUTUBE_APP_FILES?=index.html index.js adblockMain.js adblockMain.css
 
@@ -40,10 +42,12 @@ help:
 	@echo "To patch your ipk, use:"
 	@echo "  make PACKAGE=./my-tv-youtube-application.ipk"
 	@echo ""
-	@echo "It will create a file with the suffix \"patched\": ./my-tv-youtube-application-patched.ipk"
-	@echo "--"
-	@echo "If you want to keep the official YouTube application aside of the patched version, you can update the name of the package:"
-	@echo "  make PACKAGE=./my-tv-youtube-application.ipk PACKAGE_NAME=youtube-free.leanback.v4"
+	@echo "By default it creates a separate app:"
+	@echo "  id:   $(PACKAGE_NAME_TARGET)"
+	@echo "  name: $(PACKAGE_DISPLAY_NAME)"
+	@echo ""
+	@echo "To overwrite the official YouTube app instead, pass:"
+	@echo "  PACKAGE_NAME=$(PACKAGE_NAME_OFFICIAL)"
 	@echo ""
 
 .PHONY: ares-install
@@ -76,7 +80,7 @@ clean-ipk:
 $(WORKDIR)/image/usr/palm/applications/$(PACKAGE_NAME_OFFICIAL)/cobalt:
 	mkdir -p $(WORKDIR)/unpacked_ipk $(WORKDIR)/package $(WORKDIR)/image
 	# Extract ipk
-	ar x --output $(WORKDIR)/unpacked_ipk $(PACKAGE)
+	tar -xf $(PACKAGE) -C $(WORKDIR)/unpacked_ipk || (cd $(WORKDIR)/unpacked_ipk && ar x $(abspath $(PACKAGE)))
 	tar xvzpf $(WORKDIR)/unpacked_ipk/control.tar.gz -C $(WORKDIR)/unpacked_ipk
 	tar xvzpf $(WORKDIR)/unpacked_ipk/data.tar.gz -C $(WORKDIR)/package
 	if [ -f $(WORKDIR)/package/usr/palm/data/images/$(PACKAGE_NAME_OFFICIAL)/data.img ]; then \
@@ -90,7 +94,7 @@ $(WORKDIR)/cobalt:
 	tar -xJvf cobalt-bin/$(PACKAGE_COBALT_VERSION)-$(PACKAGE_SB_API_VERSION).xz -C $@
 
 .PRECIOUS: $(WORKDIR)/ipk/content/app/cobalt/content/web/adblock
-$(WORKDIR)/ipk/content/app/cobalt/content/web/adblock:
+$(WORKDIR)/ipk/content/app/cobalt/content/web/adblock: $(WEBAPP_OUTPUT_FILES)
 
 	mkdir -p $(WORKDIR)/ipk
 	cp -r $(WORKDIR)/package/usr/palm/applications/$(PACKAGE_NAME_OFFICIAL)/* $(WORKDIR)/ipk
@@ -99,7 +103,8 @@ $(WORKDIR)/ipk/content/app/cobalt/content/web/adblock:
 	fi
 
 	rm -f $(WORKDIR)/ipk/drm.nfz
-	sed -i 's/YouTube/YouTube Cobalt AdBlock/g' $(WORKDIR)/ipk/appinfo.json
+	sed -i.bak 's/YouTube/$(PACKAGE_DISPLAY_NAME)/g' $(WORKDIR)/ipk/appinfo.json
+	rm -f $(WORKDIR)/ipk/appinfo.json.bak
 	jq 'del(.fileSystemType)' < $(WORKDIR)/ipk/appinfo.json > $(WORKDIR)/ipk/appinfo2.json
 	mv $(WORKDIR)/ipk/appinfo2.json $(WORKDIR)/ipk/appinfo.json
 
@@ -113,13 +118,19 @@ $(WORKDIR)/ipk/content/app/cobalt/content/web/adblock:
 	echo " --evergreen_lite" >> $(WORKDIR)/ipk/switches
 
 ifneq ("$(PACKAGE_NAME_TARGET)","$(PACKAGE_NAME_OFFICIAL)")
-	grep -l -R "$(PACKAGE_NAME_OFFICIAL)" $(WORKDIR)/ipk | grep .json | xargs -n 1 sed -i "s/$(PACKAGE_NAME_OFFICIAL)/$(PACKAGE_NAME_TARGET)/g"
+	grep -l -R "$(PACKAGE_NAME_OFFICIAL)" $(WORKDIR)/ipk | grep .json | xargs -n 1 sed -i.bak "s/$(PACKAGE_NAME_OFFICIAL)/$(PACKAGE_NAME_TARGET)/g"
+	find $(WORKDIR)/ipk -name '*.bak' -delete
 endif
 
 	libcobalt=$$(find $(WORKDIR)/ipk -name libcobalt.so); \
 	! test -z "$$libcobalt" || (echo "" && echo "--" && echo "File \"libcobalt.so\" is not present in your IPK. This patch is not compatible with your IPK version." && exit 1) && \
 	cp $(WORKDIR)/cobalt/libcobalt.so $$libcobalt
 	cp -r $(WORKDIR)/cobalt/content $(WORKDIR)/ipk/content/app/cobalt
+	mkdir -p $(WORKDIR)/ipk/content/app/cobalt/content/web/adblock
+	cp webapp/output/index.html $(WORKDIR)/ipk/content/app/cobalt/content/web/adblock/index.html
+	cp webapp/output/index.js $(WORKDIR)/ipk/content/app/cobalt/content/web/adblock/index.js
+	cp webapp/output/adblockMain.js $(WORKDIR)/ipk/content/app/cobalt/content/web/adblock/adblockMain.js
+	cp webapp/output/adblockMain.css $(WORKDIR)/ipk/content/app/cobalt/content/web/adblock/adblockMain.css
 
 .PHONY: ares-package
 ares-package:
@@ -149,7 +160,7 @@ $(PACKAGE_TARGET): $(WORKDIR)/image/usr/palm/applications/$(PACKAGE_NAME_OFFICIA
 
 
 
-# Part to build youtube-webos
+# Part to build the injected adblock web app
 # Example of usage
 # make cobalt-bin/23.lts.4-12/libcobalt.so:
 
@@ -160,7 +171,7 @@ docker-make.%:
 .PHONY: npm
 npm:
 	( \
-		cd youtube-webos && \
+		cd webapp && \
 		npm install && \
 		npm run build -- --env production --optimization-minimize \
 	)
@@ -190,13 +201,13 @@ $(WORKDIR)/cobalt-%/cobalt/adblock/content :
 	mkdir $@
 
 define webos_youtube_app_rule
-youtube-webos/output/$(1):
+webapp/output/$(1):
 	$(MAKE) docker-make.npm
-	touch youtube-webos/output/$(1)
+	touch webapp/output/$(1)
 
 .PRECIOUS: $(WORKDIR)/cobalt-%/cobalt/adblock/content/$(1)
-$(WORKDIR)/cobalt-%/cobalt/adblock/content/$(1): $(WORKDIR)/cobalt-%/cobalt/adblock/content youtube-webos/output/$(1)
-	cp youtube-webos/output/$(1) $$(WORKDIR_COBALT)/cobalt/adblock/content/$(1)
+$(WORKDIR)/cobalt-%/cobalt/adblock/content/$(1): $(WORKDIR)/cobalt-%/cobalt/adblock/content webapp/output/$(1)
+	cp webapp/output/$(1) $$(WORKDIR_COBALT)/cobalt/adblock/content/$(1)
 endef
 $(foreach file,$(WEBOS_YOUTUBE_APP_FILES),$(eval $(call webos_youtube_app_rule,$(file))))
 
