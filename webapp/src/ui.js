@@ -19,6 +19,7 @@ function text(key) {
     title: 'YouTube webOS Cobalt AdFree',
     adblock: 'Werbung blockieren',
     sponsorblock: 'SponsorBlock aktivieren',
+    ryd: 'Dislike-Zahlen anzeigen',
     sponsor: 'Sponsor-Segmente überspringen',
     intro: 'Intro überspringen',
     outro: 'Outro überspringen',
@@ -34,6 +35,7 @@ function text(key) {
     title: 'YouTube webOS Cobalt AdFree',
     adblock: 'Enable AdBlocking',
     sponsorblock: 'Enable SponsorBlock',
+    ryd: 'Show dislike counts',
     sponsor: 'Skip Sponsor Segments',
     intro: 'Skip Intro Segments',
     outro: 'Skip Outro Segments',
@@ -128,6 +130,14 @@ export function userScriptStartUI() {
       text('sponsorblock'),
       configRead('enableSponsorBlock'),
       callbackConfig('enableSponsorBlock')
+    )
+  );
+  uiContainer.appendChild(
+    checkboxTools.add(
+      '__return_youtube_dislike',
+      text('ryd'),
+      configRead('enableReturnYouTubeDislike'),
+      callbackConfig('enableReturnYouTubeDislike')
     )
   );
 

@@ -10,7 +10,8 @@ const defaultConfig = {
   enableSponsorBlockMusicOfftopic: true,
   enableSponsorBlockPreview: false,
   enableSponsorBlockFiller: false,
-  enableSponsorBlockHook: false
+  enableSponsorBlockHook: false,
+  enableReturnYouTubeDislike: true
 };
 
 let localConfig;

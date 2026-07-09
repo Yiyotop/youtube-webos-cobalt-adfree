@@ -2,11 +2,13 @@ import 'whatwg-fetch';
 import './domrect-polyfill';
 import './adblock.js';
 import './sponsorblock.js';
+import './returnyoutubedislike.js';
 import './ui.js';
 
 import { handleLaunch, waitForChildAdd } from './utils';
 import { userScriptStartAdBlock } from './adblock.js';
 import { userScriptStartSponsorBlock } from './sponsorblock.js';
+import { userScriptStartReturnYouTubeDislike } from './returnyoutubedislike.js';
 import { userScriptStartUI } from './ui.js';
 
 document.addEventListener(
@@ -55,6 +57,7 @@ document.addEventListener(
 export function startUserScript() {
   userScriptStartAdBlock();
   userScriptStartSponsorBlock();
+  userScriptStartReturnYouTubeDislike();
   userScriptStartUI();
 }
 

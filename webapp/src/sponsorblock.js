@@ -93,16 +93,30 @@ function debugLine(label, value) {
   return `${label}: ${value === undefined || value === null ? 'n/a' : value}`;
 }
 
+function shortText(value, limit = 120) {
+  if (value === undefined || value === null) return 'n/a';
+  const textValue = String(value).replace(/\s+/g, ' ').trim();
+  return textValue.length > limit
+    ? `${textValue.substring(0, limit - 1)}…`
+    : textValue;
+}
+
+function shortElementSummary(value) {
+  if (!value) return 'none';
+  return shortText(value, 150);
+}
+
 function updateDebugPanel() {
   if (!debugPanel || debugPanel.style.display === 'none') return;
 
   const sb = window.sponsorblock;
+  const ryd = window.returnYoutubeDislike;
   const video = sb?.video || document.querySelector('video');
   const overlayParent = sb?.segmentsoverlay?.parentElement;
   const activeElement = document.activeElement;
 
   debugPanel.textContent = [
-    'YTAF SponsorBlock Debug',
+    'YouTube webOS Cobalt AdFree Debug',
     debugLine('videoId', sb?.videoID),
     debugLine(
       'time',
@@ -119,25 +133,41 @@ function updateDebugPanel() {
         : 'n/a'
     ),
     debugLine(
-      'fetch',
+      'SponsorBlock',
       sb
         ? `${sb.fetchStatus} responses=${sb.responseCount} status=${sb.lastStatus} err=${sb.fetchError}`
         : 'n/a'
     ),
-    debugLine('url', sb ? sb.requestUrl : 'n/a'),
-    debugLine('body', sb ? sb.lastBody : 'n/a'),
     debugLine(
-      'parsed',
-      sb ? `${sb.lastParsedType} ${sb.lastParsedSample}` : 'n/a'
+      'SB details',
+      sb
+        ? `segments=${sb.segments.length} next=${sb.lastSkipText} slicer=${shortElementSummary(
+            sb.lastSlicerText
+          )}`
+        : 'n/a'
     ),
-    debugLine('normalized', sb ? sb.lastNormalizedSample : 'n/a'),
-    debugLine('segments', sb ? `${sb.segments.length}` : 'n/a'),
-    debugLine('next', sb ? sb.lastSkipText : 'n/a'),
-    debugLine('slicer', sb ? sb.lastSlicerText : 'n/a'),
-    debugLine('overlayParent', summarizeDomElement(overlayParent)),
-    debugLine('focus', summarizeDomElement(activeElement)),
-    debugLine('points', getPointProbeSummary()),
-    debugLine('lowerBars', getLowerBarProbeSummary())
+    debugLine(
+      'RYD',
+      ryd
+        ? `${ryd.fetchStatus} status=${ryd.lastStatus} err=${ryd.fetchError}`
+        : 'n/a'
+    ),
+    debugLine(
+      'RYD votes',
+      ryd
+        ? `likes=${ryd.likes} dislikes=${ryd.dislikes} rating=${ryd.rating} views=${ryd.viewCount}`
+        : 'n/a'
+    ),
+    debugLine(
+      'RYD target',
+      ryd
+        ? `${shortElementSummary(ryd.targetElement)} count=${ryd.injectedText}`
+        : 'n/a'
+    ),
+    debugLine('focus', shortElementSummary(summarizeDomElement(activeElement))),
+    debugLine('bar', shortElementSummary(sb?.lastSlicerText || 'none')),
+    debugLine('overlay', shortElementSummary(summarizeDomElement(overlayParent))),
+    debugLine('lower bars', shortText(getLowerBarProbeSummary(), 180))
   ].join('\n');
 }
 
@@ -210,21 +240,21 @@ function showDebugPanel() {
     debugPanel.id = 'ytaf-player-debug-panel';
     debugPanel.style.position = 'fixed';
     debugPanel.style.left = '4vw';
-    debugPanel.style.top = '10vh';
-    debugPanel.style.maxWidth = '88vw';
-    debugPanel.style.maxHeight = '70vh';
-    debugPanel.style.padding = '18px 22px';
+    debugPanel.style.top = '8vh';
+    debugPanel.style.maxWidth = '76vw';
+    debugPanel.style.maxHeight = '50vh';
+    debugPanel.style.padding = '14px 17px';
     debugPanel.style.margin = '0';
     debugPanel.style.overflow = 'hidden';
     debugPanel.style.whiteSpace = 'pre-wrap';
     debugPanel.style.wordBreak = 'break-word';
     debugPanel.style.background = 'rgba(0, 0, 0, 0.78)';
-    debugPanel.style.border = '2px solid rgba(255, 255, 0, 0.9)';
+    debugPanel.style.border = '1px solid rgba(255, 226, 69, 0.88)';
     debugPanel.style.borderRadius = '8px';
     debugPanel.style.color = '#9cffb2';
     debugPanel.style.fontFamily = 'monospace';
-    debugPanel.style.fontSize = '22px';
-    debugPanel.style.lineHeight = '1.22';
+    debugPanel.style.fontSize = '18px';
+    debugPanel.style.lineHeight = '1.2';
     debugPanel.style.zIndex = '2147483647';
     debugPanel.style.pointerEvents = 'none';
     document.body.appendChild(debugPanel);
