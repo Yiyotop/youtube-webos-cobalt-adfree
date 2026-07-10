@@ -7,9 +7,9 @@ CURRENT_DIR := $(dir $(MAKEFILE_PATH))
 
 PACKAGE?=
 PACKAGE_NAME_OFFICIAL=youtube.leanback.v4
-PACKAGE_NAME?=com.cobalt.youtube.adfree
+PACKAGE_NAME?=youtube.leanback.v4
 PACKAGE_NAME_TARGET=$(PACKAGE_NAME)
-PACKAGE_DISPLAY_NAME?=YouTube Cobalt AdFree
+PACKAGE_DISPLAY_NAME?=YouTube webOS Cobalt AdFree
 PROJECT_VERSION?=1.0.0
 PACKAGE_COBALT_VERSION?=22.lts.6
 PACKAGE_VERSION?=$(PROJECT_VERSION)
@@ -30,9 +30,10 @@ BUILD_COBALT_ARCHITECTURE?=arm-softfp
 BUILD_COBALT_PLATFORM?=evergreen-$(BUILD_COBALT_ARCHITECTURE)
 BUILD_COBALT_TARGET?=cobalt
 BUILD_COBALT_YOUTUBE_APP_FILES_RULES=$(foreach file,$(WEBOS_YOUTUBE_APP_FILES),$(WORKDIR_COBALT)/cobalt/adblock/content/$(file))
-WEBAPP_OUTPUT_FILES=$(foreach file,$(WEBOS_YOUTUBE_APP_FILES),webapp/output/$(file))
+WEBAPP_OUTPUT_DIR?=webapp/output
+WEBAPP_OUTPUT_STAMP=webapp/.build-stamp
 
-WEBOS_YOUTUBE_APP_FILES?=index.html index.js adblockMain.js adblockMain.css
+WEBOS_YOUTUBE_APP_FILES?=adblockMain.js adblockMain.css
 
 
 .PHONY: all
@@ -95,7 +96,7 @@ $(WORKDIR)/cobalt:
 	tar -xJvf cobalt-bin/$(PACKAGE_COBALT_VERSION)-$(PACKAGE_SB_API_VERSION).xz -C $@
 
 .PRECIOUS: $(WORKDIR)/ipk/content/app/cobalt/content/web/adblock
-$(WORKDIR)/ipk/content/app/cobalt/content/web/adblock: $(WEBAPP_OUTPUT_FILES)
+$(WORKDIR)/ipk/content/app/cobalt/content/web/adblock: $(WEBAPP_OUTPUT_STAMP)
 
 	mkdir -p $(WORKDIR)/ipk
 	cp -r $(WORKDIR)/package/usr/palm/applications/$(PACKAGE_NAME_OFFICIAL)/* $(WORKDIR)/ipk
@@ -117,6 +118,10 @@ $(WORKDIR)/ipk/content/app/cobalt/content/web/adblock: $(WEBAPP_OUTPUT_FILES)
 	cp assets/imageForRecents.png $(WORKDIR)/ipk/$$(jq -r '.imageForRecents' < $(WORKDIR)/ipk/appinfo.json)
 
 	echo " --evergreen_lite" >> $(WORKDIR)/ipk/switches
+	echo " --remote_debugging_port=9222" >> $(WORKDIR)/ipk/switches
+	echo " --remote-debugging-port=9222" >> $(WORKDIR)/ipk/switches
+	echo " --remote-debugging-address=0.0.0.0" >> $(WORKDIR)/ipk/switches
+	echo " --dev_servers_listen_ip=0.0.0.0" >> $(WORKDIR)/ipk/switches
 
 ifneq ("$(PACKAGE_NAME_TARGET)","$(PACKAGE_NAME_OFFICIAL)")
 	grep -l -R "$(PACKAGE_NAME_OFFICIAL)" $(WORKDIR)/ipk | grep .json | xargs -n 1 sed -i.bak "s/$(PACKAGE_NAME_OFFICIAL)/$(PACKAGE_NAME_TARGET)/g"
@@ -128,10 +133,13 @@ endif
 	cp $(WORKDIR)/cobalt/libcobalt.so $$libcobalt
 	cp -r $(WORKDIR)/cobalt/content $(WORKDIR)/ipk/content/app/cobalt
 	mkdir -p $(WORKDIR)/ipk/content/app/cobalt/content/web/adblock
-	cp webapp/output/index.html $(WORKDIR)/ipk/content/app/cobalt/content/web/adblock/index.html
-	cp webapp/output/index.js $(WORKDIR)/ipk/content/app/cobalt/content/web/adblock/index.js
-	cp webapp/output/adblockMain.js $(WORKDIR)/ipk/content/app/cobalt/content/web/adblock/adblockMain.js
-	cp webapp/output/adblockMain.css $(WORKDIR)/ipk/content/app/cobalt/content/web/adblock/adblockMain.css
+	mkdir -p $(WORKDIR)/ipk/content/app/cobalt/content/web/adblock
+	if command -v rsync >/dev/null 2>&1; then \
+		rsync -a --delete $(WEBAPP_OUTPUT_DIR)/ $(WORKDIR)/ipk/content/app/cobalt/content/web/adblock/; \
+	else \
+		rm -rf $(WORKDIR)/ipk/content/app/cobalt/content/web/adblock/*; \
+		cp -r $(WEBAPP_OUTPUT_DIR)/. $(WORKDIR)/ipk/content/app/cobalt/content/web/adblock/; \
+	fi
 
 .PHONY: ares-package
 ares-package:
@@ -176,6 +184,10 @@ npm:
 		npm run build -- --env production --optimization-minimize \
 	)
 
+$(WEBAPP_OUTPUT_STAMP): $(shell find webapp/src -type f) webapp/package.json webapp/webpack.config.js
+	$(MAKE) docker-make.npm
+	touch $@
+
 .PHONY: npm-docker
 npm-docker: docker-make.npm
 	@echo ""
@@ -188,35 +200,24 @@ npm-docker: docker-make.npm
 clean-$(WORKDIR)/cobalt-%:
 	cd $(WORKDIR)/cobalt-$* && git checkout . && git clean -d -f
 
-$(WORKDIR)/cobalt-%/:
-	git clone --depth 1 --branch $* https://github.com/youtube/cobalt.git $@
-
-.PRECIOUS: $(WORKDIR)/cobalt-%/.patched
-$(WORKDIR)/cobalt-%/.patched:
-	cd $(dir $@) && patch -p1 < $(CURRENT_DIR)/cobalt-patches/cobalt-$*.patch || (echo "Missing patch for version $*" && exit 1)
-	touch $@
-
-.PRECIOUS: $(WORKDIR)/cobalt-%/cobalt/adblock/content
-$(WORKDIR)/cobalt-%/cobalt/adblock/content :
-	mkdir $@
-
-define webos_youtube_app_rule
-webapp/output/$(1):
-	$(MAKE) docker-make.npm
-	touch webapp/output/$(1)
-
-.PRECIOUS: $(WORKDIR)/cobalt-%/cobalt/adblock/content/$(1)
-$(WORKDIR)/cobalt-%/cobalt/adblock/content/$(1): $(WORKDIR)/cobalt-%/cobalt/adblock/content webapp/output/$(1)
-	cp webapp/output/$(1) $$(WORKDIR_COBALT)/cobalt/adblock/content/$(1)
-endef
-$(foreach file,$(WEBOS_YOUTUBE_APP_FILES),$(eval $(call webos_youtube_app_rule,$(file))))
-
 cobalt-bin:
 	mkdir cobalt-bin
 
 .PRECIOUS: cobalt-bin/libcobalt-%/libcobalt.so
 cobalt-bin/%/libcobalt.so: BUILD_VERSION=$*
-cobalt-bin/%/libcobalt.so: cobalt-bin $$(WORKDIR_COBALT)/ $$(WORKDIR_COBALT)/.patched $$(BUILD_COBALT_YOUTUBE_APP_FILES_RULES)
+cobalt-bin/%/libcobalt.so: cobalt-bin $(WEBAPP_OUTPUT_STAMP)
+	if [ ! -d "$(WORKDIR_COBALT)/.git" ]; then \
+		git clone --depth 1 --branch $(BUILD_COBALT_VERSION) https://github.com/youtube/cobalt.git $(WORKDIR_COBALT); \
+	fi
+	if [ ! -f "$(WORKDIR_COBALT)/.patched" ]; then \
+		(cd $(WORKDIR_COBALT) && patch -p1 < $(CURRENT_DIR)/cobalt-patches/cobalt-$(BUILD_COBALT_VERSION).patch && touch .patched) || (echo "Missing patch for version $(BUILD_COBALT_VERSION)" && exit 1); \
+	fi
+	perl -0pi -e 's/^(\s*)<<: \*common-definitions\n\1<<: \*build-volumes/$$1<<: [*common-definitions, *build-volumes]/mg' $(WORKDIR_COBALT)/docker-compose.yml
+	grep -q 'archive.debian.org/debian-security' $(WORKDIR_COBALT)/docker/linux/base/Dockerfile || \
+		perl -0pi -e 's/ENV PYTHONUNBUFFERED 1\n/ENV PYTHONUNBUFFERED 1\n\nRUN sed -i -e '"'"'s|http:\\/\\/security.debian.org|http:\\/\\/archive.debian.org\\/debian-security|'"'"' -e '"'"'s|http:\\/\\/httpredir.debian.org|http:\\/\\/archive.debian.org|'"'"' -e '"'"'s|deb http:\\/\\/archive.debian.org\\/debian stretch-updates|# deb http:\\/\\/archive.debian.org\\/debian stretch-updates|'"'"' \\/etc\\/apt\\/sources.list\n/' $(WORKDIR_COBALT)/docker/linux/base/Dockerfile
+	perl -0pi -e 's/&& \. \/tmp\/install\.sh/&& bash \/tmp\/install.sh/g; s/nvm install --lts/nvm install 16/g; s/nvm alias default lts\/\*/nvm alias default 16\/*/g' $(WORKDIR_COBALT)/docker/linux/base/build/Dockerfile
+	mkdir -p $(WORKDIR_COBALT)/cobalt/adblock/content
+	cp -r $(WEBAPP_OUTPUT_DIR)/. $(WORKDIR_COBALT)/cobalt/adblock/content/
 	cd $(WORKDIR_COBALT) && \
 	docker-compose run $(if $(BUILD_COBALT_PARALLEL),-e NINJA_PARALLEL=$(BUILD_COBALT_PARALLEL),) -e CONFIG="$(BUILD_COBALT_TYPE)" -e TARGET="$(BUILD_COBALT_TARGET)" -e SB_API_VERSION="$(BUILD_COBALT_SB_API_VERSION)" $(BUILD_COBALT_PLATFORM)
 	mkdir -p $(dir $@)
