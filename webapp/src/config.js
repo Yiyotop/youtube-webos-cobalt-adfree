@@ -17,10 +17,12 @@ const defaultConfig = {
 let localConfig;
 
 try {
-  localConfig = JSON.parse(window.localStorage[CONFIG_KEY]);
+  localConfig = JSON.parse(
+    window.localStorage[CONFIG_KEY] || JSON.stringify(defaultConfig)
+  );
 } catch (err) {
   console.warn('Config read failed:', err);
-  localConfig = defaultConfig;
+  localConfig = { ...defaultConfig };
 }
 
 export function configRead(key) {
