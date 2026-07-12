@@ -16,6 +16,7 @@ PACKAGE_VERSION?=$(PROJECT_VERSION)
 PACKAGE_IPK_BUILD=$(PACKAGE_NAME_TARGET)_$(PACKAGE_VERSION)_arm.ipk
 PACKAGE_TARGET?=$(PACKAGE_IPK_BUILD)
 PACKAGE_SB_API_VERSION?=$(shell strings $(WORKDIR)/image/usr/palm/applications/$(PACKAGE_NAME_OFFICIAL)/cobalt | grep sb_api | jq -r '.sb_api_version' | grep -v null || strings $(WORKDIR)/package/usr/palm/applications/$(PACKAGE_NAME_OFFICIAL)/cobalt | grep sb_api | jq -r '.sb_api_version' | grep -v null)
+PACKAGE_COBALT_ARCHIVE?=cobalt-bin/$(PACKAGE_COBALT_VERSION)-$(PACKAGE_SB_API_VERSION).xz
 OFFICAL_YOUTUBE_IPK?=ipks-official/2023-07-30-youtube.leanback.v4-1.1.7.ipk
 
 WORKDIR?=workdir
@@ -32,6 +33,7 @@ BUILD_COBALT_TARGET?=cobalt
 BUILD_COBALT_YOUTUBE_APP_FILES_RULES=$(foreach file,$(WEBOS_YOUTUBE_APP_FILES),$(WORKDIR_COBALT)/cobalt/adblock/content/$(file))
 WEBAPP_OUTPUT_DIR?=webapp/output
 WEBAPP_OUTPUT_STAMP=webapp/.build-stamp
+NODE_DOCKER_IMAGE?=node:22
 
 WEBOS_YOUTUBE_APP_FILES?=adblockMain.js adblockMain.css
 
@@ -81,19 +83,23 @@ clean-ipk:
 .PRECIOUS: $(WORKDIR)/image/usr/palm/applications/$(PACKAGE_NAME_OFFICIAL)/cobalt
 $(WORKDIR)/image/usr/palm/applications/$(PACKAGE_NAME_OFFICIAL)/cobalt:
 	mkdir -p $(WORKDIR)/unpacked_ipk $(WORKDIR)/package $(WORKDIR)/image
-	# Extract ipk
-	tar -xf $(PACKAGE) -C $(WORKDIR)/unpacked_ipk || (cd $(WORKDIR)/unpacked_ipk && ar x $(abspath $(PACKAGE)))
-	tar xvzpf $(WORKDIR)/unpacked_ipk/control.tar.gz -C $(WORKDIR)/unpacked_ipk
-	tar xvzpf $(WORKDIR)/unpacked_ipk/data.tar.gz -C $(WORKDIR)/package
-	if [ -f $(WORKDIR)/package/usr/palm/data/images/$(PACKAGE_NAME_OFFICIAL)/data.img ]; then \
-		unsquashfs -f -d $(WORKDIR)/image $(WORKDIR)/package/usr/palm/data/images/$(PACKAGE_NAME_OFFICIAL)/data.img; \
+	if [[ "$(PACKAGE)" == *.tar.gz || "$(PACKAGE)" == *.tgz ]]; then \
+		mkdir -p $(WORKDIR)/package/usr/palm/applications; \
+		tar xzpf $(PACKAGE) -C $(WORKDIR)/package/usr/palm/applications; \
+	else \
+		tar -xf $(PACKAGE) -C $(WORKDIR)/unpacked_ipk || (cd $(WORKDIR)/unpacked_ipk && ar x $(abspath $(PACKAGE))); \
+		tar xvzpf $(WORKDIR)/unpacked_ipk/control.tar.gz -C $(WORKDIR)/unpacked_ipk; \
+		tar xvzpf $(WORKDIR)/unpacked_ipk/data.tar.gz -C $(WORKDIR)/package; \
+		if [ -f $(WORKDIR)/package/usr/palm/data/images/$(PACKAGE_NAME_OFFICIAL)/data.img ]; then \
+			unsquashfs -f -d $(WORKDIR)/image $(WORKDIR)/package/usr/palm/data/images/$(PACKAGE_NAME_OFFICIAL)/data.img; \
+		fi; \
 	fi
 
 .PRECIOUS: $(WORKDIR)/cobalt
 $(WORKDIR)/cobalt:
 	mkdir -p $@
 	@! test -z $(PACKAGE_SB_API_VERSION) || (echo "" && echo "--" && echo "Cannot find SB_API_VERSION in IPK binary. You can try to specify it with: make PACKAGE_SB_API_VERSION=12" && exit 1)
-	tar -xJvf cobalt-bin/$(PACKAGE_COBALT_VERSION)-$(PACKAGE_SB_API_VERSION).xz -C $@
+	tar -xJvf $(PACKAGE_COBALT_ARCHIVE) -C $@
 
 .PRECIOUS: $(WORKDIR)/ipk/content/app/cobalt/content/web/adblock
 $(WORKDIR)/ipk/content/app/cobalt/content/web/adblock: $(WEBAPP_OUTPUT_STAMP)
@@ -119,8 +125,6 @@ $(WORKDIR)/ipk/content/app/cobalt/content/web/adblock: $(WEBAPP_OUTPUT_STAMP)
 
 	echo " --evergreen_lite" >> $(WORKDIR)/ipk/switches
 	echo " --remote_debugging_port=9222" >> $(WORKDIR)/ipk/switches
-	echo " --remote-debugging-port=9222" >> $(WORKDIR)/ipk/switches
-	echo " --remote-debugging-address=0.0.0.0" >> $(WORKDIR)/ipk/switches
 	echo " --dev_servers_listen_ip=0.0.0.0" >> $(WORKDIR)/ipk/switches
 
 ifneq ("$(PACKAGE_NAME_TARGET)","$(PACKAGE_NAME_OFFICIAL)")
@@ -175,7 +179,7 @@ $(PACKAGE_TARGET): $(WORKDIR)/image/usr/palm/applications/$(PACKAGE_NAME_OFFICIA
 
 .PHONY: docker-make.%
 docker-make.%:
-	docker run --rm -i -u $$(id -u):$$(id -g) -e HOME=/app -e npm_config_cache=/app/.npm -v "$$PWD:/app" -w /app node:18 sh -lc 'mkdir -p /app/.webos /app/.npm && make $*'
+	docker run --rm -i -u $$(id -u):$$(id -g) -e HOME=/app -e npm_config_cache=/app/.npm -v "$$PWD:/app" -w /app $(NODE_DOCKER_IMAGE) sh -lc 'mkdir -p /app/.webos /app/.npm && make $*'
 .PHONY: npm
 npm:
 	( \
@@ -221,15 +225,22 @@ cobalt-bin/%/libcobalt.so: cobalt-bin $(WEBAPP_OUTPUT_STAMP)
 	cd $(WORKDIR_COBALT) && \
 	docker-compose run $(if $(BUILD_COBALT_PARALLEL),-e NINJA_PARALLEL=$(BUILD_COBALT_PARALLEL),) -e CONFIG="$(BUILD_COBALT_TYPE)" -e TARGET="$(BUILD_COBALT_TARGET)" -e SB_API_VERSION="$(BUILD_COBALT_SB_API_VERSION)" $(BUILD_COBALT_PLATFORM)
 	mkdir -p $(dir $@)
-	cp -r $(WORKDIR_COBALT)/out/$(BUILD_COBALT_PLATFORM)-sbversion-$(BUILD_COBALT_SB_API_VERSION)_$(BUILD_COBALT_TYPE)/content $(dir $@)
-	if [ -f $(WORKDIR_COBALT)/out/$(BUILD_COBALT_PLATFORM)-sbversion-$(BUILD_COBALT_SB_API_VERSION)_$(BUILD_COBALT_TYPE)/cobalt ]; then \
-		cp $(WORKDIR_COBALT)/out/$(BUILD_COBALT_PLATFORM)-sbversion-$(BUILD_COBALT_SB_API_VERSION)_$(BUILD_COBALT_TYPE)/cobalt $(dir $@); \
-	fi
-	if [ -f $(WORKDIR_COBALT)/out/$(BUILD_COBALT_PLATFORM)-sbversion-$(BUILD_COBALT_SB_API_VERSION)_$(BUILD_COBALT_TYPE)/lib/libcobalt.so ]; then \
-		cp $(WORKDIR_COBALT)/out/$(BUILD_COBALT_PLATFORM)-sbversion-$(BUILD_COBALT_SB_API_VERSION)_$(BUILD_COBALT_TYPE)/lib/libcobalt.so $@; \
-	fi
-	if [ -f $(WORKDIR_COBALT)/out/$(BUILD_COBALT_PLATFORM)-sbversion-$(BUILD_COBALT_SB_API_VERSION)_$(BUILD_COBALT_TYPE)/libcobalt.so ]; then \
-		cp $(WORKDIR_COBALT)/out/$(BUILD_COBALT_PLATFORM)-sbversion-$(BUILD_COBALT_SB_API_VERSION)_$(BUILD_COBALT_TYPE)/libcobalt.so $@; \
+	outdir="$(WORKDIR_COBALT)/out/$(BUILD_COBALT_PLATFORM)-sbversion-$(BUILD_COBALT_SB_API_VERSION)_$(BUILD_COBALT_TYPE)"; \
+	if [ ! -d "$$outdir" ]; then \
+		outdir="$(WORKDIR_COBALT)/out/$(BUILD_COBALT_PLATFORM)_$(BUILD_COBALT_TYPE)"; \
+	fi; \
+	cp -r "$$outdir/content" $(dir $@); \
+	if [ -f "$$outdir/cobalt" ]; then \
+		cp "$$outdir/cobalt" $(dir $@); \
+	fi; \
+	if [ -f "$$outdir/lib/libcobalt.so" ]; then \
+		cp "$$outdir/lib/libcobalt.so" $@; \
+	fi; \
+	if [ -f "$$outdir/libcobalt.so" ]; then \
+		cp "$$outdir/libcobalt.so" $@; \
+	fi; \
+	if [ "$(BUILD_COBALT_TYPE)" = "devel" ] && [ -f "$@" ]; then \
+		docker run --rm -v "$$PWD:/work" -w /work cobalt-build-evergreen:latest sh -lc 'arm-linux-gnueabi-strip --strip-debug "$$1"' sh "$@"; \
 	fi
 
 cobalt-bin/%.xz:
