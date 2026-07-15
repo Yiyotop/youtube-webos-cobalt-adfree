@@ -4,7 +4,7 @@ import { configRead } from './config';
 const RYD_API = 'https://returnyoutubedislikeapi.com/votes';
 
 const DESCRIPTION_SELECTORS = {
-    panel: 'ytlr-structured-description-content-renderer',
+    panel: 'ytlr-video-description-header-renderer, ytlr-structured-description-content-renderer',
     standardContainer: '.ytLrVideoDescriptionHeaderRendererFactoidContainer',
     compactContainer: '.rznqCe',
     stdFactoid: '.ytLrVideoDescriptionHeaderRendererFactoid',
@@ -59,22 +59,45 @@ function formatCount(value) {
 
 function requestJSON(url, timeout, onSuccess, onFailure) {
     const xhr = new XMLHttpRequest();
+    let finished = false;
+    const finishSuccess = (...args) => {
+        if (finished) return;
+        finished = true;
+        clearTimeout(watchdog);
+        onSuccess(...args);
+    };
+    const finishFailure = (...args) => {
+        if (finished) return;
+        finished = true;
+        clearTimeout(watchdog);
+        onFailure(...args);
+    };
+    const watchdog = setTimeout(() => {
+        try {
+            xhr.abort();
+        } catch (err) {
+            // Some Cobalt XHR implementations throw if aborting a blocked request.
+        }
+        finishFailure(new Error('RYD watchdog timeout'), xhr.status || 'n/a', '');
+    }, timeout + 1200);
 
     xhr.onload = () => {
+        const body = xhr.responseText || '';
         if (xhr.status < 200 || xhr.status >= 300) {
-            onFailure(new Error(`RYD returned ${xhr.status}`));
+            finishFailure(new Error(`RYD returned ${xhr.status}`), xhr.status, body);
             return;
         }
 
         try {
-            onSuccess(JSON.parse(xhr.responseText || '{}'));
+            finishSuccess(JSON.parse(body || '{}'), xhr.status, body);
         } catch (err) {
-            onFailure(new Error(`RYD parse failed: ${err.message || err}`));
+            finishFailure(new Error(`RYD parse failed: ${err.message || err}`), xhr.status, body);
         }
     };
 
-    xhr.onerror = () => onFailure(new Error('RYD request failed'));
-    xhr.ontimeout = () => onFailure(new Error('RYD request timed out'));
+    xhr.onerror = () => finishFailure(new Error('RYD request failed'), xhr.status || 'n/a');
+    xhr.ontimeout = () => finishFailure(new Error('RYD request timed out'), xhr.status || 'n/a');
+    xhr.onabort = () => finishFailure(new Error('RYD request aborted'), xhr.status || 'n/a');
     xhr.open('GET', url);
     xhr.timeout = timeout;
     xhr.send();
@@ -129,17 +152,35 @@ function ensureCountSpan(label, count) {
 }
 
 function findDescriptionPanel() {
-    return document.querySelector(DESCRIPTION_SELECTORS.panel);
+    const panels = Array.from(document.querySelectorAll(DESCRIPTION_SELECTORS.panel));
+    return panels.find((panel) => panel.querySelector(DESCRIPTION_SELECTORS.compactContainer)) ||
+        panels.find((panel) => panel.querySelector(DESCRIPTION_SELECTORS.standardContainer)) ||
+        null;
 }
 
 function classNameFromSelector(selector) {
     return selector && selector[0] === '.' ? selector.substring(1) : '';
 }
 
+function setReturnYouTubeDislikeCssActive(active) {
+    const root = document.documentElement || document.body;
+    if (!root) return;
+
+    if (active) {
+        root.classList.add('ytaf-ryd-active');
+    } else {
+        root.classList.remove('ytaf-ryd-active');
+    }
+}
+
 class ReturnYouTubeDislike {
     videoID = null;
     dislikes = 'n/a';
     votesLoaded = false;
+    fetchStatus = 'idle';
+    fetchError = '';
+    lastStatus = 'n/a';
+    lastBody = '';
     dislikeButton = null;
     dislikeButtonObserver = null;
     domObserver = null;
@@ -150,11 +191,18 @@ class ReturnYouTubeDislike {
     isUpdatingButton = false;
     optimisticDisliked = false;
     lastLocalToggleAt = 0;
+    descriptionStatus = 'idle';
+    descriptionError = '';
 
     init(videoID) {
+        setReturnYouTubeDislikeCssActive(true);
         this.videoID = videoID;
         this.votesLoaded = false;
         this.dislikes = 'n/a';
+        this.fetchStatus = 'idle';
+        this.fetchError = '';
+        this.lastStatus = 'n/a';
+        this.lastBody = '';
 
         this.globalActivateHandler = (evt) => this.handleGlobalActivate(evt);
         document.addEventListener('keydown', this.globalActivateHandler, true);
@@ -170,21 +218,33 @@ class ReturnYouTubeDislike {
 
         this.votesLoaded = false;
         this.dislikes = 'n/a';
+        this.fetchStatus = 'fetching';
+        this.fetchError = '';
+        this.lastStatus = 'n/a';
+        this.lastBody = '';
 
         const url = `${RYD_API}?videoId=${encodeURIComponent(this.videoID)}`;
         requestJSON(
             url,
             8000,
-            (results) => {
+            (results, status = 200, body = '') => {
                 this.votesLoaded = true;
+                this.fetchStatus = 'votes-loaded';
+                this.fetchError = '';
+                this.lastStatus = status;
+                this.lastBody = String(body || '').substring(0, 180);
                 this.dislikes = Number.isFinite(Number(results.dislikes))
                     ? Number(results.dislikes)
                     : 'n/a';
                 this.refresh();
                 this.scheduleRefresh(400);
             },
-            () => {
+            (err, status = 'n/a', body = '') => {
                 this.votesLoaded = true;
+                this.fetchStatus = 'fetch-error';
+                this.fetchError = err?.message || String(err);
+                this.lastStatus = status;
+                this.lastBody = String(body || '').substring(0, 180);
                 this.dislikes = 'n/a';
                 this.refresh();
             }
@@ -370,9 +430,12 @@ class ReturnYouTubeDislike {
     }
 
     findDescriptionLikesElement(mode) {
-        return mode.container.querySelector(
-            `div[idomkey="factoid-0"]${mode.factoidClass}, div[aria-label*="like"]${mode.factoidClass}, div[aria-label*="Like"]${mode.factoidClass}, div[aria-label*="Gefällt"]${mode.factoidClass}`
-        );
+        const factoids = Array.from(mode.container.querySelectorAll(mode.factoidClass));
+        return factoids.find((factoid) => {
+            const label = factoid.getAttribute('aria-label') || '';
+            const text = factoid.textContent || '';
+            return /like|likes|gefällt/i.test(label) || /like|likes|gefällt/i.test(text);
+        }) || mode.container.querySelector(`div[idomkey="factoid-0"]${mode.factoidClass}`);
     }
 
     createDescriptionDislikeElement(likesElement, mode) {
@@ -400,21 +463,45 @@ class ReturnYouTubeDislike {
 
     updateDescriptionDislikes() {
         const dislikeCount = Number(this.dislikes);
-        if (!Number.isFinite(dislikeCount)) return;
+        if (!Number.isFinite(dislikeCount)) {
+            this.descriptionStatus = 'waiting-for-votes';
+            return;
+        }
 
         const panel = findDescriptionPanel();
-        if (!panel) return;
+        if (!panel) {
+            this.descriptionStatus = 'panel-missing';
+            return;
+        }
 
         const mode = this.getDescriptionMode(panel);
-        if (!mode) return;
+        if (!mode) {
+            this.descriptionStatus = 'mode-missing';
+            return;
+        }
 
         let dislikeElement = document.getElementById('ytaf-ryd-description-dislikes');
         if (!dislikeElement || !mode.container.contains(dislikeElement)) {
             const likesElement = this.findDescriptionLikesElement(mode);
-            if (!likesElement) return;
+            if (!likesElement) {
+                this.descriptionStatus = 'likes-missing';
+                return;
+            }
 
             dislikeElement = this.createDescriptionDislikeElement(likesElement, mode);
-            likesElement.insertAdjacentElement('afterend', dislikeElement);
+            try {
+                if (likesElement.parentNode) {
+                    likesElement.parentNode.insertBefore(dislikeElement, likesElement.nextSibling);
+                } else {
+                    mode.container.appendChild(dislikeElement);
+                }
+                this.descriptionStatus = 'inserted';
+                this.descriptionError = '';
+            } catch (err) {
+                this.descriptionStatus = 'insert-failed';
+                this.descriptionError = err?.message || String(err);
+                return;
+            }
             mode.container.classList.add('ytaf-ryd-ready');
         }
 
@@ -429,9 +516,68 @@ class ReturnYouTubeDislike {
             labelElement.textContent = 'Dislikes';
         }
         dislikeElement.setAttribute('aria-label', `${dislikeText} Dislikes`);
+        this.descriptionStatus = 'updated';
+    }
+
+    getDescriptionDebugState() {
+        const panels = Array.from(document.querySelectorAll(DESCRIPTION_SELECTORS.panel));
+        const panel = findDescriptionPanel();
+        const existingDislike = document.getElementById('ytaf-ryd-description-dislikes');
+
+        if (!panel) {
+            return {
+                panels: panels.length,
+                panel: 'not found',
+                status: this.descriptionStatus,
+                error: this.descriptionError,
+                compact: document.querySelectorAll(DESCRIPTION_SELECTORS.compactContainer).length,
+                standard: document.querySelectorAll(DESCRIPTION_SELECTORS.standardContainer).length,
+                dislikeElement: existingDislike ? 'outside-panel' : 'missing'
+            };
+        }
+
+        const mode = this.getDescriptionMode(panel);
+        if (!mode) {
+            return {
+                panels: panels.length,
+                panel: panel.tagName.toLowerCase(),
+                mode: 'none',
+                status: this.descriptionStatus,
+                error: this.descriptionError,
+                compact: panel.querySelectorAll(DESCRIPTION_SELECTORS.compactContainer).length,
+                standard: panel.querySelectorAll(DESCRIPTION_SELECTORS.standardContainer).length,
+                dislikeElement: existingDislike ? 'present' : 'missing'
+            };
+        }
+
+        const factoids = Array.from(mode.container.querySelectorAll(mode.factoidClass));
+        const likesElement = this.findDescriptionLikesElement(mode);
+        const valueElement = existingDislike?.querySelector('[data-ytaf-ryd-description-value="true"]');
+        const containerRect = mode.container.getBoundingClientRect?.();
+        const dislikeRect = existingDislike?.getBoundingClientRect?.();
+
+        return {
+            panels: panels.length,
+            panel: panel.tagName.toLowerCase(),
+            mode: mode.factoidClass === DESCRIPTION_SELECTORS.cptFactoid ? 'compact' : 'standard',
+            status: this.descriptionStatus,
+            error: this.descriptionError,
+            factoids: factoids.length,
+            likes: likesElement ? 'found' : 'missing',
+            dislikeElement: existingDislike && mode.container.contains(existingDislike) ? 'present' : 'missing',
+            dislikeText: valueElement?.textContent || 'n/a',
+            readyClass: mode.container.classList.contains('ytaf-ryd-ready') ? 'yes' : 'no',
+            containerRect: containerRect
+                ? `${Math.round(containerRect.left)},${Math.round(containerRect.top)} ${Math.round(containerRect.width)}x${Math.round(containerRect.height)}`
+                : 'n/a',
+            dislikeRect: dislikeRect
+                ? `${Math.round(dislikeRect.left)},${Math.round(dislikeRect.top)} ${Math.round(dislikeRect.width)}x${Math.round(dislikeRect.height)}`
+                : 'n/a'
+        };
     }
 
     destroy() {
+        setReturnYouTubeDislikeCssActive(false);
         this.clearRetryTimers();
 
         if (this.refreshTimer) {
@@ -510,6 +656,18 @@ function scheduleLoadReturnYouTubeDislike() {
 export function userScriptStartReturnYouTubeDislike() {
     window.returnYoutubeDislike = window.returnYoutubeDislike || null;
     window.addEventListener('hashchange', scheduleLoadReturnYouTubeDislike, false);
+
+    if (!window.__ytafReturnYouTubeDislikeConfigListenerStarted) {
+        window.__ytafReturnYouTubeDislikeConfigListenerStarted = true;
+        document.addEventListener(
+            'ytaf-config-changed',
+            (evt) => {
+                if (evt?.detail?.key !== 'enableReturnYouTubeDislike') return;
+                scheduleLoadReturnYouTubeDislike();
+            },
+            true
+        );
+    }
 
     if (document.readyState === 'loading') {
         window.addEventListener('load', () => setTimeout(scheduleLoadReturnYouTubeDislike, 500), { once: true });

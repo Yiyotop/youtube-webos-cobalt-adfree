@@ -43,4 +43,17 @@ export function configWrite(key, value) {
   console.info('Setting key', key, 'to', value);
   localConfig[key] = value;
   window.localStorage[CONFIG_KEY] = JSON.stringify(localConfig);
+
+  try {
+    document.dispatchEvent(
+      new CustomEvent('ytaf-config-changed', {
+        detail: { key, value }
+      })
+    );
+  } catch (err) {
+    const event = document.createEvent('Event');
+    event.initEvent('ytaf-config-changed', true, true);
+    event.detail = { key, value };
+    document.dispatchEvent(event);
+  }
 }

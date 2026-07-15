@@ -58,7 +58,7 @@ index 77fd7a5fae3..32fe4712b32 100644
 -                                 const std::string& value) {
 +                                 std::string& value) {
    DCHECK(!name.empty());
-+  value.append(" sponsor.ajay.app");
++  value.append(" sponsor.ajay.app returnyoutubedislikeapi.com");
    std::string lower_name = base::ToLowerASCII(name);
    if (lower_name == ContentSecurityPolicy::kDefaultSrc) {
      SetCSPDirective(name, value, &default_src_);
