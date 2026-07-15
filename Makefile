@@ -33,7 +33,8 @@ BUILD_COBALT_PLATFORM?=evergreen-$(BUILD_COBALT_ARCHITECTURE)
 BUILD_COBALT_TARGET?=cobalt
 BUILD_COBALT_YOUTUBE_APP_FILES_RULES=$(foreach file,$(WEBOS_YOUTUBE_APP_FILES),$(WORKDIR_COBALT)/cobalt/adblock/content/$(file))
 WEBAPP_OUTPUT_DIR?=webapp/output
-WEBAPP_OUTPUT_STAMP=webapp/.build-stamp
+WEBAPP_DEBUG?=0
+WEBAPP_OUTPUT_STAMP=webapp/.build-stamp.$(WEBAPP_DEBUG)
 NODE_DOCKER_IMAGE?=node:22
 
 WEBOS_YOUTUBE_APP_FILES?=adblockMain.js adblockMain.css
@@ -338,17 +339,18 @@ $(PACKAGE_TARGET): FORCE $(WORKDIR)/image/usr/palm/applications/$(PACKAGE_NAME_O
 
 .PHONY: docker-make.%
 docker-make.%:
-	docker run --rm -i -u $$(id -u):$$(id -g) -e HOME=/app -e npm_config_cache=/app/.npm -v "$$PWD:/app" -w /app $(NODE_DOCKER_IMAGE) sh -lc 'mkdir -p /app/.webos /app/.npm && make $*'
+	docker run --rm -i -u $$(id -u):$$(id -g) -e HOME=/app -e npm_config_cache=/app/.npm -e WEBAPP_DEBUG="$(WEBAPP_DEBUG)" -v "$$PWD:/app" -w /app $(NODE_DOCKER_IMAGE) sh -lc 'mkdir -p /app/.webos /app/.npm && make $*'
 .PHONY: npm
 npm:
 	( \
 		cd webapp && \
 		npm install && \
-		npm run build -- --env production --optimization-minimize \
+		YTAF_DEBUG="$(WEBAPP_DEBUG)" npm run build -- --env production --optimization-minimize \
 	)
 
 $(WEBAPP_OUTPUT_STAMP): $(shell find webapp/src -type f) webapp/package.json webapp/webpack.config.js
 	$(MAKE) docker-make.npm
+	rm -f webapp/.build-stamp.*
 	touch $@
 
 .PHONY: npm-docker

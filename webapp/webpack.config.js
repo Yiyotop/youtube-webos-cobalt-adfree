@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const webpack = require('webpack');
 
 const MiniCssExtractPlugin = require('mini-css-extract-plugin');
 
@@ -12,8 +13,13 @@ function cleanOutputDir() {
   fs.mkdirSync(outputPath, { recursive: true });
 }
 
+function truthy(value) {
+  return ['1', 'true', 'yes', 'on'].includes(String(value || '').toLowerCase());
+}
+
 module.exports = (env) => {
   cleanOutputDir();
+  const enableDebugOverlay = truthy(process.env.YTAF_DEBUG || env.debug || env.ytafDebug);
 
   return [
     {
@@ -81,6 +87,9 @@ module.exports = (env) => {
         ]
       },
       plugins: [
+        new webpack.DefinePlugin({
+          __YTAF_DEBUG__: JSON.stringify(enableDebugOverlay)
+        }),
         new MiniCssExtractPlugin({
           chunkFilename: '[id].css'
         })

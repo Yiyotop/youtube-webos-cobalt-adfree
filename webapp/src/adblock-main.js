@@ -10,7 +10,6 @@ import { userScriptStartUI } from './ui.js';
 import { userScriptStartAdBlock } from './adblock.js';
 import { userScriptStartSponsorBlock } from './sponsorblock.js';
 import { userScriptStartReturnYouTubeDislike } from './returnyoutubedislike.js';
-import { userScriptStartDebugOverlay } from './debug-overlay.js';
 
 console.info('[ytaf] adblock-main.js LOADED, all imports successful');
 
@@ -77,12 +76,25 @@ function startOptionalHook(configKey, startHook) {
   }
 }
 
+function startDebugOverlay() {
+  if (typeof __YTAF_DEBUG__ === 'undefined' || !__YTAF_DEBUG__) {
+    return;
+  }
+
+  try {
+    require('./debug-overlay.js').userScriptStartDebugOverlay();
+    console.info('[ytaf] Debug overlay started');
+  } catch (err) {
+    console.warn('[ytaf] Failed to start debug overlay:', err);
+  }
+}
+
 export async function startUserScript() {
   console.info('[ytaf] startUserScript begin');
 
   try {
     userScriptStartUI();
-    userScriptStartDebugOverlay();
+    startDebugOverlay();
     console.info('[ytaf] UI started');
   } catch (err) {
     console.warn('[ytaf] Failed to start UI:', err);
