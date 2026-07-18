@@ -209,7 +209,7 @@ luna-send-pub -n 1 'luna://com.webos.service.eim/addDevice' '{"appId":"youtube.l
 Disable autostart:
 
 ```sh
-luna-send -n 1 'luna://com.webos.service.eim/deleteDevice' '{"appId":"youtube.leanback.v4"}'
+luna-send-pub -n 1 'luna://com.webos.service.eim/deleteDevice' '{"appId":"youtube.leanback.v4"}'
 ```
 
 Autostart may improve startup time because the app can stay loaded in the background. This can increase idle memory usage.
