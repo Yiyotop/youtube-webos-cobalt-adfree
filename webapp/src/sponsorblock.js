@@ -1,46 +1,15 @@
 import { configRead } from './config';
 import { showNotification } from './ui';
 import { text } from './languages/index.js';
+import {
+  sponsorBlockCategories as categories,
+  sponsorBlockCategoryConfig as categoryConfig,
+  sponsorBlockCategoryColors as categoryColors
+} from './sponsorblock-categories.js';
 
 const sponsorblockAPI = 'https://sponsor.ajay.app/api';
 const markerAttribute = 'data-ytaf-sponsorblock-marker';
 const markerContainerAttribute = 'data-ytaf-sponsorblock-container';
-
-const categories = [
-  'sponsor',
-  'intro',
-  'outro',
-  'interaction',
-  'selfpromo',
-  'music_offtopic',
-  'preview',
-  'filler',
-  'hook'
-];
-
-const categoryConfig = {
-  sponsor: 'enableSponsorBlockSponsor',
-  intro: 'enableSponsorBlockIntro',
-  outro: 'enableSponsorBlockOutro',
-  interaction: 'enableSponsorBlockInteraction',
-  selfpromo: 'enableSponsorBlockSelfPromo',
-  music_offtopic: 'enableSponsorBlockMusicOfftopic',
-  preview: 'enableSponsorBlockPreview',
-  filler: 'enableSponsorBlockFiller',
-  hook: 'enableSponsorBlockHook'
-};
-
-const categoryColors = {
-  sponsor: '#00d400',
-  intro: '#00ffff',
-  outro: '#0202ed',
-  interaction: '#cc00ff',
-  selfpromo: '#ffff00',
-  music_offtopic: '#ff9900',
-  preview: '#008fd6',
-  filler: '#7300ff',
-  hook: '#395699'
-};
 
 let controller = null;
 
@@ -202,18 +171,13 @@ function getClosest(element, selector) {
   return null;
 }
 
-function getStableMarkerAnchor(progressBar) {
-  if (!progressBar) return { anchor: null, parent: null };
-
-  // Die innere progress-bar wird auf webOS laufend durch Incremental DOM
-  // neu geschrieben. Deshalb previewbar nicht darin, sondern als Geschwister-
-  // element des stabileren ytlr-progress-bar einfügen.
-  const anchor = getClosest(progressBar, 'ytlr-progress-bar') || progressBar;
-  return { anchor, parent: anchor.parentNode || null };
+function getMarkerHost(progressBar) {
+  return getClosest(progressBar, 'ytlr-multi-markers-player-bar-renderer') || progressBar;
 }
 
 function findProgressBarParts() {
   const selectors = [
+    'ytlr-multi-markers-player-bar-renderer',
     'ytlr-multi-markers-player-bar-renderer [idomkey="progress-bar"]',
     '[idomkey="progress-bar"].afTAdb',
     '[idomkey="progress-bar"]'
@@ -283,6 +247,9 @@ class SponsorBlockController {
   progressBar = null;
   progressSegment = null;
   overlay = null;
+  markerHost = null;
+  markerNodes = [];
+  lastMarkerFrameHash = null;
   markerCheckFrame = null;
   isProcessing = false;
   attachVideoTimeout = null;
@@ -290,6 +257,8 @@ class SponsorBlockController {
   skipPollInterval = null;
   skipHandler = null;
   markerHandler = null;
+  configChangeHandler = null;
+  requestToken = 0;
   skipped = {};
 
   start() {
@@ -297,10 +266,23 @@ class SponsorBlockController {
     this.observePlayerUI();
     window.addEventListener('hashchange', () => this.syncVideoState(), true);
     document.addEventListener('yt-navigate-finish', () => this.syncVideoState(), true);
+    this.configChangeHandler = (event) => {
+      const key = event?.detail?.key;
+      if (key !== 'enableSponsorBlock' && !Object.values(categoryConfig).includes(key)) return;
+
+      // Reload the current video so enabled categories, markers and skipping agree.
+      this.syncVideoState();
+      const currentVideoId = getCurrentVideoId();
+      if (configRead('enableSponsorBlock') && currentVideoId) {
+        this.loadVideo(currentVideoId);
+      }
+    };
+    document.addEventListener('ytaf-config-changed', this.configChangeHandler, true);
   }
 
   destroy() {
     this.active = false;
+    this.requestToken += 1;
 
     if (this.domObserver) {
       this.domObserver.disconnect();
@@ -312,7 +294,7 @@ class SponsorBlockController {
     }
     this.progressBar = null;
     this.progressSegment = null;
-    this.overlay = null;
+    this.removeOverlay();
 
     if (this.nextSkipTimeout) {
       window.clearTimeout(this.nextSkipTimeout);
@@ -337,6 +319,10 @@ class SponsorBlockController {
       }
       this.video = null;
     }
+    if (this.configChangeHandler) {
+      document.removeEventListener('ytaf-config-changed', this.configChangeHandler, true);
+      this.configChangeHandler = null;
+    }
   }
 
   syncVideoState() {
@@ -356,6 +342,7 @@ class SponsorBlockController {
   }
 
   reset() {
+    this.requestToken += 1;
     this.videoID = null;
     this.segments = [];
     this.skippableCategories = [];
@@ -367,7 +354,7 @@ class SponsorBlockController {
     this.lastBody = '';
     this.lastSkipText = 'none';
     this.markerStatus = 'none';
-    this.overlay = null;
+    this.removeOverlay();
     this.progressBar = null;
     this.progressSegment = null;
     this.skipped = {};
@@ -407,10 +394,16 @@ class SponsorBlockController {
         // Das eigene Einfügen darf keinen neuen Durchlauf auslösen.
         if (isOnlySponsorBlockMarkerAddition(mutation)) continue;
 
-        // Relevant sind nur echte DOM-Umbauten durch YouTube.
         if (mutation.type === 'childList') {
           shouldCheck = true;
           break;
+        }
+        if (mutation.type === 'attributes') {
+          const playerBar = getClosest(this.progressBar, 'ytlr-progress-bar');
+          if (mutation.target === this.progressBar || mutation.target === playerBar) {
+            shouldCheck = true;
+            break;
+          }
         }
       }
 
@@ -419,7 +412,9 @@ class SponsorBlockController {
 
     this.domObserver.observe(observeTarget, {
       childList: true,
-      subtree: true
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['class', 'style', 'hidden']
     });
 
     this.checkForProgressBar();
@@ -452,53 +447,74 @@ class SponsorBlockController {
     }
   }
 
+  removeOverlay() {
+    this.markerNodes.forEach((marker) => marker.parentNode?.removeChild(marker));
+    this.markerNodes = [];
+    this.markerHost = null;
+    this.lastMarkerFrameHash = null;
+    this.overlay = null;
+  }
+
   syncOverlayWithSegment() {
-    if (!this.overlay || !this.progressSegment || !this.progressBar) return;
+    if (!this.markerNodes.length || !this.progressSegment || !this.markerHost) return;
 
-    // Optik vollständig vom originalen Cue übernehmen.
-    this.overlay.className = this.progressSegment.className;
-    this.overlay.style.cssText = this.progressSegment.style.cssText;
+    const duration = getVideoDuration(this.video, this.segments);
+    if (!duration) return;
 
-    // Da previewbar außerhalb der laufend neu geschriebenen progress-bar liegt,
-    // muss nur ihre einmalige Geometrie auf die echte Leiste übertragen werden.
-    const { parent } = getStableMarkerAnchor(this.progressBar);
-    if (!parent) return;
+    const hostRect = this.markerHost.getBoundingClientRect();
+    const segmentRect = this.progressSegment.getBoundingClientRect();
+    const frame = {
+      left: Math.round(segmentRect.left - hostRect.left),
+      top: Math.round(segmentRect.top - hostRect.top),
+      width: Math.round(segmentRect.width),
+      height: Math.max(2, Math.round(segmentRect.height))
+    };
+    const frameHash = `${frame.left}:${frame.top}:${frame.width}:${frame.height}`;
+    if (frameHash === this.lastMarkerFrameHash) return;
 
-    const parentStyle = window.getComputedStyle(parent);
-    if (parentStyle.position === 'static') {
-      parent.style.position = 'relative';
-    }
+    this.lastMarkerFrameHash = frameHash;
+    this.markerNodes.forEach((marker, index) => {
+      const segment = this.segments[index];
+      if (!marker || !segment) return;
 
-    const barRect = this.progressBar.getBoundingClientRect();
-    const parentRect = parent.getBoundingClientRect();
-    const rootFontSize =
-      parseFloat(window.getComputedStyle(document.documentElement).fontSize) || 16;
-
-    this.overlay.style.left = `${(barRect.left - parentRect.left) / rootFontSize}rem`;
-    this.overlay.style.top = `${(barRect.top - parentRect.top) / rootFontSize}rem`;
-    this.overlay.style.width = `${barRect.width / rootFontSize}rem`;
-    this.overlay.style.height = `${barRect.height / rootFontSize}rem`;
+      const startRatio = Math.max(0, Math.min(1, segment.segment[0] / duration));
+      const endRatio = Math.max(startRatio, Math.min(1, segment.segment[1] / duration));
+      marker.style.setProperty('left', `${Math.round(frame.left + frame.width * startRatio)}px`, 'important');
+      marker.style.setProperty(
+        'width',
+        `${Math.max(2, Math.round(frame.width * Math.max(0.0018, endRatio - startRatio)))}px`,
+        'important'
+      );
+      marker.style.setProperty('top', `${frame.top}px`, 'important');
+      marker.style.setProperty('height', `${frame.height}px`, 'important');
+    });
   }
 
   findExistingOverlay(progressBar) {
-    const { parent } = getStableMarkerAnchor(progressBar);
-    if (!parent) return null;
-
-    const children = parent.children || [];
-    for (let index = 0; index < children.length; index += 1) {
-      const child = children[index];
-      if (
-        child.hasAttribute?.(markerContainerAttribute) &&
-        child.getAttribute('data-ytaf-video-id') === this.videoID
-      ) {
-        return child;
-      }
-    }
-
-    return null;
+    const host = getMarkerHost(progressBar);
+    const connected =
+      this.markerNodes.length &&
+      this.markerHost === host &&
+      this.markerNodes.every((marker) => marker.isConnected && marker.parentNode === host);
+    return connected ? this.markerNodes[0] : null;
   }
 
   checkForProgressBar() {
+    // Der TV-Client hält während Overlay-Animationen mehrere kurzlebige
+    // Fortschrittsleisten im DOM. Solange unser v1-Host noch verbunden ist,
+    // darf die Suche nicht auf einen davon umspringen.
+    const hasConnectedMarkers =
+      this.markerNodes.length &&
+      this.markerHost?.isConnected &&
+      this.progressBar?.isConnected &&
+      this.progressSegment?.isConnected &&
+      this.markerNodes.every((marker) => marker.isConnected && marker.parentNode === this.markerHost);
+    if (hasConnectedMarkers) {
+      this.syncOverlayWithSegment();
+      this.markerStatus = `rendered ${this.markerNodes.length}`;
+      return;
+    }
+
     const parts = findProgressBarParts();
     if (!parts) {
       this.progressBar = null;
@@ -514,13 +530,11 @@ class SponsorBlockController {
     if (existingOverlay) {
       this.overlay = existingOverlay;
       this.syncOverlayWithSegment();
-      this.markerStatus = `rendered ${existingOverlay.children.length}`;
-      this.stopMarkerObserver();
+      this.markerStatus = `rendered ${this.markerNodes.length}`;
       return;
     }
 
-    // Eine alte JS-Referenz kann übrig bleiben, obwohl YouTube den Knoten entfernt hat.
-    this.overlay = null;
+    this.removeOverlay();
     this.drawOverlay();
   }
 
@@ -567,6 +581,7 @@ class SponsorBlockController {
   }
 
   loadVideo(videoId) {
+    const requestToken = ++this.requestToken;
     this.videoID = videoId;
     this.segments = [];
     this.skipped = {};
@@ -577,7 +592,7 @@ class SponsorBlockController {
     this.lastBody = '';
     this.lastSkipText = 'none';
     this.markerStatus = 'none';
-    this.overlay = null;
+    this.removeOverlay();
     this.progressBar = null;
     this.progressSegment = null;
 
@@ -591,13 +606,13 @@ class SponsorBlockController {
 
     requestJSON(
       this.requestUrl,
-      (results, status = 200, body = '') => this.handleSegments(results, status, body),
-      (err, status = 'n/a', body = '') => this.handleError(err, status, body)
+      (results, status = 200, body = '') => this.handleSegments(results, status, body, requestToken),
+      (err, status = 'n/a', body = '') => this.handleError(err, status, body, requestToken)
     );
   }
 
-  handleSegments(results, status, body) {
-    if (this.videoID !== getCurrentVideoId()) return;
+  handleSegments(results, status, body, requestToken) {
+    if (requestToken !== this.requestToken || this.videoID !== getCurrentVideoId()) return;
 
     this.lastStatus = status;
     this.lastBody = String(body || '').substring(0, 180);
@@ -611,8 +626,8 @@ class SponsorBlockController {
     this.observePlayerUI();
   }
 
-  handleError(err, status, body) {
-    if (this.videoID !== getCurrentVideoId()) return;
+  handleError(err, status, body, requestToken) {
+    if (requestToken !== this.requestToken || this.videoID !== getCurrentVideoId()) return;
 
     this.lastStatus = status;
     this.lastBody = String(body || '').substring(0, 180);
@@ -632,8 +647,7 @@ class SponsorBlockController {
     if (existingOverlay) {
       this.overlay = existingOverlay;
       this.syncOverlayWithSegment();
-      this.markerStatus = `rendered ${existingOverlay.children.length}`;
-      this.stopMarkerObserver();
+      this.markerStatus = `rendered ${this.markerNodes.length}`;
       return;
     }
 
@@ -643,22 +657,35 @@ class SponsorBlockController {
       return;
     }
 
-    const markerContainer = document.createElement('div');
-    markerContainer.id = 'previewbar';
-    markerContainer.setAttribute(markerContainerAttribute, 'true');
-    markerContainer.setAttribute('data-ytaf-video-id', this.videoID || '');
-    markerContainer.className = this.progressSegment.className;
-    markerContainer.style.cssText = this.progressSegment.style.cssText;
+    const host = getMarkerHost(this.progressBar);
+    if (!host) {
+      this.markerStatus = 'waiting-for-stable-anchor';
+      return;
+    }
 
-    const barRect = this.progressBar.getBoundingClientRect();
-    const barWidth = this.progressBar.offsetWidth || barRect.width;
-    const rootFontSize =
-      parseFloat(window.getComputedStyle(document.documentElement).fontSize) || 16;
+    const hostStyle = window.getComputedStyle(host);
+    if (hostStyle.position === 'static') {
+      host.style.setProperty('position', 'relative', 'important');
+    }
+    host.classList.add('ytaf-sponsorblock-marker-host');
+    host.style.setProperty('overflow', 'visible', 'important');
 
-    if (!barWidth) {
+    const hostRect = host.getBoundingClientRect();
+    const trackRect = this.progressSegment.getBoundingClientRect();
+    const frame = {
+      left: Math.round(trackRect.left - hostRect.left),
+      top: Math.round(trackRect.top - hostRect.top),
+      width: Math.round(trackRect.width),
+      height: Math.max(2, Math.round(trackRect.height))
+    };
+
+    if (!frame.width) {
       this.markerStatus = 'missing-progress-bar-width';
       return;
     }
+
+    this.markerHost = host;
+    this.lastMarkerFrameHash = `${frame.left}:${frame.top}:${frame.width}:${frame.height}`;
 
     let renderedCount = 0;
 
@@ -668,17 +695,37 @@ class SponsorBlockController {
       if (end <= start) return;
 
       const marker = document.createElement('div');
+      marker.className = 'ytaf-sponsorblock-marker';
       marker.setAttribute(markerAttribute, 'true');
-      marker.className = 'Mj9Xhb ox5idb';
-
-      const leftRem = ((start / duration) * barWidth) / rootFontSize;
-      const widthRem = (((end - start) / duration) * barWidth) / rootFontSize;
-
-      marker.style.left = `${leftRem}rem`;
-      marker.style.width = `${Math.max(widthRem, 0.03)}rem`;
+      marker.style.setProperty('position', 'absolute', 'important');
+      marker.style.setProperty('display', 'block', 'important');
+      marker.style.setProperty('pointer-events', 'none', 'important');
+      marker.style.setProperty('z-index', '2147483646', 'important');
+      marker.style.setProperty('opacity', '0.7', 'important');
+      marker.style.setProperty('min-width', '2px', 'important');
+      marker.style.setProperty('right', 'auto', 'important');
+      marker.style.setProperty('bottom', 'auto', 'important');
+      marker.style.setProperty('margin', '0', 'important');
+      marker.style.setProperty('padding', '0', 'important');
+      marker.style.setProperty('transform', 'none', 'important');
+      marker.style.setProperty('-webkit-transform', 'none', 'important');
+      marker.style.setProperty(
+        'left',
+        `${Math.round(frame.left + frame.width * (start / duration))}px`,
+        'important'
+      );
+      marker.style.setProperty(
+        'width',
+        `${Math.max(2, Math.round(frame.width * Math.max(0.0018, (end - start) / duration)))}px`,
+        'important'
+      );
+      marker.style.setProperty('top', `${frame.top}px`, 'important');
+      marker.style.setProperty('height', `${frame.height}px`, 'important');
       marker.style.backgroundColor = categoryColors[segmentData.category] || '#ffff00';
       marker.title = categoryLabel(segmentData.category);
-      markerContainer.appendChild(marker);
+      marker.setAttribute('data-ytaf-video-id', this.videoID || '');
+      host.appendChild(marker);
+      this.markerNodes.push(marker);
       renderedCount += 1;
     });
 
@@ -687,26 +734,8 @@ class SponsorBlockController {
       return;
     }
 
-    // Nicht innerhalb von progress-bar einfügen: Cobalt/YouTube schreibt deren
-    // Kinder während der Wiedergabe laufend neu. Als Geschwisterelement des
-    // äußeren ytlr-progress-bar bleibt previewbar stabil und flackert nicht.
-    const { anchor, parent } = getStableMarkerAnchor(this.progressBar);
-    if (!anchor || !parent) {
-      this.markerStatus = 'waiting-for-stable-anchor';
-      return;
-    }
-
-    const nextSibling = anchor.nextSibling;
-    if (nextSibling) {
-      parent.insertBefore(markerContainer, nextSibling);
-    } else {
-      parent.appendChild(markerContainer);
-    }
-
-    this.overlay = markerContainer;
-    this.syncOverlayWithSegment();
+    this.overlay = this.markerNodes[0] || null;
     this.markerStatus = `rendered ${renderedCount}`;
-    this.stopMarkerObserver();
 
     console.info(
       '[SponsorBlock] markers rendered:',
