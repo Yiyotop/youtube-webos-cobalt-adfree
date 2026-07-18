@@ -70,7 +70,7 @@ through the webOS Homebrew Channel.
 This project also provides a custom Homebrew Channel repository:
 
 ```text
-https://raw.githubusercontent.com/RF1705/youtube-webos-cobalt-adfree/main/repo.json
+https://github.com/RF1705/youtube-webos-cobalt-adfree/raw/HEAD/repo.json
 ```
 
 In Homebrew Channel, open **Settings**, choose **Add repository**, and enter
