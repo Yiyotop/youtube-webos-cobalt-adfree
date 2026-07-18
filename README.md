@@ -52,6 +52,11 @@ The patched app uses `youtube.leanback.v4` and therefore replaces the official
 YouTube application. Keep a copy of the official package if you want to restore
 it later.
 
+Community-reported device, firmware and feature results are collected in the
+[device compatibility matrix](docs/device-compatibility.md). The matrix also
+contains the reporting template and unpatched baseline test packages used for
+compatibility investigations.
+
 ## Installation
 
 Download a release `.ipk` package and install it using one of the following methods.
